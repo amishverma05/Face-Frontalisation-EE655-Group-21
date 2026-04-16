@@ -1,0 +1,11 @@
+torch
+torchvision
+tqdm
+scikit-image
+numpy
+Pillow
+opencv-python
+basicsr
+facexlib
+gfpgan
+realesrgan
