@@ -1,0 +1,83 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+
+# ─── Virtual Environment ──────────────────────────────────────────────────────
+venv/
+env/
+.env/
+.venv/
+
+# ─── Jupyter ──────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ─── Data — large datasets (download separately via download_data.py) ─────────
+data/300W_LP/
+data/AFLW2000/
+data/subject_map_cache.pkl
+*.zip
+
+# ─── Checkpoints & trained weights (too large for GitHub) ────────────────────
+checkpoints/*.pth
+checkpoints/*.pt
+checkpoints/*.pkl
+# Keep the frontal latent avg (tiny, 30KB) — useful to track
+!checkpoints/frontal_latent_avg.pt
+
+# ─── Logs, samples, results (generated during training) ───────────────────────
+logs/
+samples/
+results/
+
+# ─── Temporary / scratch files ────────────────────────────────────────────────
+tmp_check.py
+tmp_stylegan2/
+_sg2_tmp/
+*.tmp
+*.bak
+
+# ─── Test output images (scratch) ─────────────────────────────────────────────
+test_avg_face*.jpg
+test_avg_face*.png
+test_face*.png
+test_nonfused*.png
+test_rand_w*.png
+test_w_avg*.png
+test_fresh.png
+
+# ─── Debug / analysis txt files ───────────────────────────────────────────────
+key_diff.txt
+missing.txt
+arch_dump.txt
+implementation_plan.md
+
+# ─── IDE / Editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
+
+# ─── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── CUDA build artifacts ─────────────────────────────────────────────────────
+stylegan2_op/*.so
+stylegan2_op/*.pyd
+stylegan2_op/*.dll
+stylegan2_op/*.o
+
+# ─── Wandb / MLflow ───────────────────────────────────────────────────────────
+wandb/
+mlruns/
