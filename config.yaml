@@ -1,0 +1,49 @@
+# ============================================================
+# Face Frontalization - Hybrid Configuration
+# Pose-Conditioned FPN Encoder + Frozen StyleGAN2
+# RTX 4060 Laptop (8GB VRAM) optimized
+# ============================================================
+
+data:
+  train_root: ./data/300W_LP          # 300W-LP dataset root
+  eval_root:  ./data/AFLW2000         # AFLW2000-3D evaluation root
+  img_size: 256                        # StyleGAN2 outputs 256px
+  min_yaw: 15.0                        # Minimum yaw (degrees) for profile images
+  max_yaw: 90.0                        # Maximum yaw to include
+  val_split: 0.05                      # 5% of training data as validation
+
+training:
+  epochs: 100
+  batch_size: 4                        # Tight VRAM budget at 256px — keep at 4
+  gradient_accumulation_steps: 4       # Effective batch = 16
+  lr_g: 2.0e-4                         # raised from 1e-4 — stronger escape from collapse
+  beta1: 0.9
+  beta2: 0.999
+  decay_epoch: 70                      # pushed later since training restarts fresh
+  mixed_precision: true                # FP16 training
+  num_workers: 4                       # Using multiple workers since main is protected
+  phase2_start: 50                     # Epoch to drop parse loss
+  disc_warmup_epoch: 20                # Epoch to start the discriminator (0 = from start)
+
+model:
+  stylegan_ckpt: ./checkpoints/ffhq-256-config-e.pt
+  frontal_latent_avg: ./checkpoints/frontal_latent_avg.pt  # precomputed by setup_stylegan.py
+  style_dim: 512
+  n_styles: 14                         # = synthesis.n_latent (rosinality 256px = log2(256)*2-2)
+  pose_dim: 256
+
+loss:
+  lambda_id:    4.0     
+  lambda_lpips: 0.5     
+  lambda_perc:  0.5     
+  lambda_lmk:   0.0     
+  lambda_parse: 0.0     
+  lambda_wnorm: 0.05    
+  lambda_l2:    0.1     
+  lambda_adv:   0.1     
+
+paths:
+  checkpoint_dir: ./checkpoints
+  log_dir:        ./logs
+  sample_dir:     ./samples
+  results_dir:    ./results
