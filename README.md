@@ -2,109 +2,198 @@
 
 **EE655 Group Project — Group 21**
 
-FusionFront is an advanced dual-pipeline computer vision framework designed to solve two challenging problems in facial image processing:
+FusionFront is a dual-pipeline deep learning framework designed to address two challenging problems in facial image processing:
 
-1. **Blind Face Super-Resolution (Deblurring & Restoration):** Reconstructing high-frequency, photorealistic details from severely degraded, low-resolution, or pixelated inputs.
-2. **Pose-Conditioned Face Frontalization:** Transforming extreme profile images (up to 90° yaw) into a normalized frontal view while preserving identity.
+1. **Blind Face Super-Resolution (Deblurring & Restoration):** Recovering high-frequency, photorealistic details from severely degraded or pixelated inputs.
+2. **Pose-Conditioned Face Frontalization:** Transforming extreme profile images (up to 90° yaw) into a canonical frontal view while preserving identity embeddings.
 
 ---
 
 ## 🔹 Part 1: Image Enhancement & Blind Super-Resolution (Deblurring)
 
-### 1.1 Overview
+### 1.1 Problem Setting
 
-Real-world images often suffer from unknown degradation, blur, and downsampling. This module focuses on reconstructing high-quality images from degraded inputs.
-
-### 1.2 Models Used
-
-#### SRResNet (Pixel-Level Reconstruction)
-
-* Minimizes pixel-wise loss (L1)
-* Produces smooth but accurate outputs
-* Avoids hallucination
-
-#### Real-ESRGAN (Perceptual Enhancement)
-
-* Uses GAN + perceptual loss
-* Produces sharper, visually realistic outputs
-* Hallucinates high-frequency details
+Real-world images often suffer from unknown degradation kernels, motion blur, and aggressive downsampling. This module reconstructs high-quality (HQ) images from low-resolution (LR) inputs under blind degradation.
 
 ---
 
-### 1.3 Quantitative Results
+### 1.2 Model Architectures & Behavior
 
-| Metric  | SRResNet   | Real-ESRGAN | Better   |
-| ------- | ---------- | ----------- | -------- |
-| PSNR    | **35.59**  | 29.35       | SRResNet |
-| SSIM    | **0.9883** | 0.8424      | SRResNet |
-| L1 Loss | **0.0127** | 5.4104      | SRResNet |
+#### **SRResNet (Pixel-Level Reconstruction)**
+
+* Optimizes strict **L1 (MAE)** loss
+* Learns deterministic LR → HR mapping
+* Produces **structurally accurate but smooth outputs**
+* Avoids hallucination due to pixel averaging
+
+#### **Real-ESRGAN (Perceptual Super-Resolution)**
+
+* Uses **GAN + perceptual (VGG-based) loss**
+* U-Net discriminator with spectral normalization
+* Produces **sharp, visually realistic outputs**
+* Hallucinates high-frequency details (pores, hair, edges)
 
 ---
 
-### 1.4 Conclusion
+### 1.3 Quantitative Evaluation
 
-* **SRResNet:** Better for accuracy (metrics)
-* **Real-ESRGAN:** Better for visual realism
+| Metric    | SRResNet   | Real-ESRGAN | Better   |
+| --------- | ---------- | ----------- | -------- |
+| PSNR (dB) | **35.59**  | 29.35       | SRResNet |
+| SSIM      | **0.9883** | 0.8424      | SRResNet |
+| L1 Loss   | **0.0127** | 5.4104      | SRResNet |
+
+---
+
+### 1.4 Insight
+
+* **SRResNet:** mathematically optimal reconstruction
+* **Real-ESRGAN:** perceptually superior (human vision)
+
+👉 Trade-off: **accuracy vs realism**
 
 ---
 
 ## 🔹 Part 2: Hybrid Face Frontalization (FusionFront)
 
-### 2.1 Architecture Overview
+### 2.1 Motivation
 
-#### Encoder Components
-
-* **Geometry Encoder:** extracts facial landmarks → 512D
-* **Identity Encoder (ArcFace):** preserves identity → 512D
-* **pSp Encoder:** generates W+ latent codes
+Standard encoder-decoder architectures fail under extreme pose due to missing geometry. We instead leverage **latent-space manipulation with a frozen StyleGAN2 generator**.
 
 ---
 
-### 2.2 Latent Refinement
+### 2.2 Architecture Breakdown
 
-* Multi-head cross-attention
-* Combines identity + geometry
-* Produces refined latent vector
+#### 🔸 Phase 1: Encoder Trio
 
----
+1. **Geometry Encoder (Trainable)**
 
-### 2.3 Generator
+   * Extracts 68 landmark heatmaps
+   * Encodes spatial structure → **512-D vector (f_geo)**
 
-* Frozen StyleGAN2 (FFHQ-256)
-* Ensures photorealistic output
-* Prevents GAN collapse
+2. **Identity Encoder (Frozen ArcFace)**
 
----
+   * Removes pose/lighting
+   * Produces identity embedding → **512-D vector (f_id)**
 
-### 2.4 Loss Functions
+3. **pSp Encoder (ResNet50 + FPN)**
 
-| Loss     | Purpose               |
-| -------- | --------------------- |
-| Identity | preserve identity     |
-| LPIPS    | perceptual similarity |
-| L1       | pixel alignment       |
+   * Multi-scale feature extraction
+   * Outputs latent codes:
 
----
-
-## 🔹 Part 3: Interactive Demo
-
-### Features
-
-* Frontalization + enhancement pipeline
-* Side-by-side comparison
-* Dynamic gallery support
+   ```
+   W_coarse ∈ ℝ^{B × 18 × 512}
+   ```
 
 ---
 
-### Run the App
+#### 🔸 Phase 2: Hybrid Latent Refinement
+
+We refine latent codes using **Multi-Head Cross-Attention (MHA)**:
+
+* Query → `W_coarse`
+* Key/Value → `[f_geo, f_id]`
+
+👉 Mechanism:
+
+* Aligns identity with geometry
+* Learns pose correction in latent space
+
+---
+
+#### 🔸 Gated Residual Refinement
+
+* Learns latent offset:
+
+  ```
+  ΔW
+  ```
+* Uses gating parameter:
+
+  ```
+  γ ≈ 0 (initially)
+  ```
+* Final latent:
+
+  ```
+  W_ref = W_coarse + γΔW
+  ```
+
+👉 Ensures **stable training + gradual refinement**
+
+---
+
+#### 🔸 Phase 3: StyleGAN2 Generator
+
+* Pretrained FFHQ-256 model
+* **Fully frozen (110/110 layers)**
+* Guarantees:
+
+  * photorealism
+  * no GAN collapse
+  * stable outputs
+
+---
+
+### 2.3 Loss Function Stack
+
+| Loss               | Weight | Role                 |
+| ------------------ | ------ | -------------------- |
+| Identity (ArcFace) | 4.0    | preserve identity    |
+| LPIPS              | 0.5    | perceptual structure |
+| L1                 | 0.1    | pixel consistency    |
+
+👉 Prevents:
+
+* identity drift
+* structural distortion
+* trivial copying
+
+---
+
+## 🔹 Part 3: Integrated Pipeline & Demo
+
+FusionFront combines both modules into a **single inference pipeline**:
+
+```
+Profile Image
+   ↓
+Frontalization (FusionFront)
+   ↓
+Enhancement (Deblurring / GFPGAN)
+   ↓
+High-quality Frontal Output
+```
+
+---
+
+### 3.1 Setup
 
 ```bash
 pip install -r requirements.txt
 pip install gfpgan facexlib basicsr
+```
+
+---
+
+### 3.2 Required Checkpoints
+
+Place in `checkpoints/`:
+
+* `best.pth`
+* `ffhq-256-config-e.pt`
+* `frontal_latent_avg.pt`
+* `GFPGANv1.4.pth`
+
+---
+
+### 3.3 Run Demo
+
+```bash
 python demo.py
 ```
 
-Access at:
+Open:
 
 ```
 http://localhost:7860
@@ -112,12 +201,21 @@ http://localhost:7860
 
 ---
 
+### 3.4 Features
+
+* Dual output: raw vs enhanced
+* Real-time frontalization
+* Interactive gallery
+* Visualization of internal architecture
+
+---
+
 ## 🔹 Project Structure
 
 ```
 .
-├── FusionFront/        # Frontalization pipeline
-├── Deblurring/         # Super-resolution & restoration
+├── FusionFront/        # Frontalization module
+├── Deblurring/         # Super-resolution module
 ├── checkpoints/
 ├── models/
 ├── data/
@@ -127,14 +225,15 @@ http://localhost:7860
 
 ---
 
-## 🔹 Final Insight
+## 🔹 Key Contribution
 
-FusionFront combines:
+FusionFront integrates:
 
-* **Geometric understanding**
-* **Identity preservation**
-* **Generative modeling**
+* **Geometric reasoning (landmarks)**
+* **Identity preservation (ArcFace)**
+* **Latent-space refinement (MHA + gating)**
+* **Photorealistic generation (StyleGAN2)**
 
-with a complementary **Deblurring module**, creating a complete facial restoration pipeline.
+with a complementary **Deblurring pipeline**, forming a complete facial restoration system.
 
 ---
