@@ -1,4 +1,4 @@
-# Fusion Front: Dual-Pipeline Facial Image Restoration & Frontalization 🎭✨
+# Fusion Front: Dual-Pipeline Facial Image Restoration & Frontalization
 
 **EE655 Group Project — Group 21**
 
@@ -8,7 +8,7 @@ Fusion Front is an advanced, dual-pipeline computer vision framework developed t
 
 ---
 
-## 🚀 Part 1: Image Enhancement & Blind Super-Resolution (Pixerization)
+##  Part 1: Image Enhancement & Blind Super-Resolution (Pixerization)
 
 ### 1.1 Overview and Objective
 Real-world images often suffer from unknown degradation kernels, motion blur, and severe downsampling. The objective of this sub-project is to reconstruct high-quality (HQ) images from pixelated low-resolution (LR) input streams. To analyze the behavioral differences in deep generative super-resolution, two distinct model architectures—**SRResNet** and **Real-ESRGAN**—were fine-tuned and evaluated on a paired face dataset.
@@ -47,7 +47,7 @@ While mathematically superior, SRResNet outputs are observed to be exceedingly s
 
 ---
 
-## 🧠 Part 2: Hybrid Face Frontalization (StyleGAN2)
+##  Part 2: Hybrid Face Frontalization (StyleGAN2)
 
 Generating frontal faces from severe side-profiles generally fails using standard U-Net techniques due to missing geometric data (e.g., the hidden side of the face). We migrated our pipeline to a **Hybrid Latent Inversion Architecture** utilizing the tremendous generative prios of a pre-trained StyleGAN2 network.
 
@@ -81,7 +81,8 @@ The model is constrained mathematically to avoid auto-encoding background featur
 
 ---
 
-## 💻 3. Implementation & Interactive Demo Interface
+## 
+3. Implementation & Interactive Demo Interface
 
 This framework includes an interactive UI combining both projects into one pipeline: it takes sideways profile inputs, Frontalizes them via the hybrid StyleGAN2 pipeline, and immediately cascades the result into a Real-ESRGAN/GFPGAN perceptual enhancement layer to synthesize high-frequency detail.
 
