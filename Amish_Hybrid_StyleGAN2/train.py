@@ -186,7 +186,10 @@ def train_epoch(encoder, G_frozen, D, loss_fn, opt_E, opt_D, loader,
         # ── Encoder forward (FP16) ───────────────────────────────────────
         with autocast('cuda', enabled=cfg['training']['mixed_precision']):
             w_pred       = encoder(profile, yaw, pitch, w_avg=w_avg)        # (B, 15, 512)
-            fake_frontal = G_frozen(w_pred, input_is_latent=True)           # (B, 3, 256, 256)
+            
+        # StyleGAN2 demodulation overflows in native FP16 (causing black NaN blobs).
+        # We MUST evaluate the generator in FP32.
+        fake_frontal = G_frozen(w_pred.float(), input_is_latent=True)       # (B, 3, 256, 256)
 
         # ── Discriminator step (skipped during warmup for stability) ────
         if use_disc:
@@ -239,8 +242,10 @@ def train_epoch(encoder, G_frozen, D, loss_fn, opt_E, opt_D, loader,
         if (step + 1) % max(1, len(loader) // 10) == 0:
             with torch.no_grad():
                 encoder.eval()
-                w_s = encoder(profile[:8], yaw[:8], pitch[:8], w_avg=w_avg)
-                fake_sample = G_frozen(w_s, input_is_latent=True)
+                with autocast('cuda', enabled=cfg['training']['mixed_precision']):
+                    w_s = encoder(profile[:8], yaw[:8], pitch[:8], w_avg=w_avg)
+                # Generate sample in FP32 to avoid NaN blobs
+                fake_sample = G_frozen(w_s.float(), input_is_latent=True)
                 encoder.train()
             path = os.path.join(sample_dir, f'epoch{epoch:03d}_step{step+1}.jpg')
             save_sample_grid(profile[:8], fake_sample, frontal[:8], path,

@@ -83,15 +83,16 @@ class PoseEmbedding(nn.Module):
         return self.mlp(torch.cat([emb_yaw, emb_pitch], dim=1))
 
 
-class AdaIN(nn.Module):
+class FiLM(nn.Module):
     """
-    Adaptive Instance Normalization applied with a pose-derived affine transform.
+    Feature-wise Linear Modulation applied with a pose-derived affine transform.
     scale, bias come from a linear projection of the pose embedding vector.
+    FiLM replaces AdaIN to prevent InstanceNorm from mathematically zeroing out
+    the spatial mean right before Global Average Pooling.
     """
     def __init__(self, channels: int, pose_dim: int):
         super().__init__()
-        self.norm   = nn.InstanceNorm2d(channels, affine=False)
-        self.linear = nn.Linear(pose_dim, channels * 2)  # → scale, bias
+        self.linear = nn.Linear(pose_dim, channels * 2)  # -> scale, bias
 
     def forward(self, x: torch.Tensor, pose: torch.Tensor) -> torch.Tensor:
         """
@@ -102,40 +103,45 @@ class AdaIN(nn.Module):
         scale, bias = params.chunk(2, dim=1)               # each (B, C)
         scale = scale.unsqueeze(-1).unsqueeze(-1) + 1.0    # init ~1
         bias  = bias.unsqueeze(-1).unsqueeze(-1)
-        return scale * self.norm(x) + bias
+        return x * scale + bias
 
 
 class FPNAdapterBlock(nn.Module):
     """
-    Adapter block that converts a FPN feature map → one style vector (512-dim).
+    Adapter block that converts a FPN feature map -> one style vector (512-dim).
 
     Pipeline per FPN level:
-      Conv3×3 stride2 → ReLU → ConvTranspose2d (restore) → AdaIN(pose) → GlobalAvgPool → Linear → 512
+      Conv3x3 -> GroupNorm -> LeakyReLU -> FiLM(pose) -> LeakyReLU -> GlobalAvgPool -> Linear -> 512
     """
     def __init__(self, in_ch: int, pose_dim: int, style_dim: int = 512):
         super().__init__()
-        mid_ch = min(in_ch, 256)
-        self.down = nn.Sequential(
-            nn.Conv2d(in_ch, mid_ch, 3, stride=2, padding=1, bias=False),
-            nn.ReLU(inplace=True),
-        )
-        self.up = nn.ConvTranspose2d(mid_ch, mid_ch, 4, stride=2, padding=1, bias=False)
-        self.adain = AdaIN(mid_ch, pose_dim)
+        mid_ch = 256
         
-        self.proj = nn.Linear(mid_ch, style_dim)
-        # Initialize projection to very small weights to start close to w_avg
-        # while preventing FP16 gradient underflow (0.0 causes dead FPN)
-        nn.init.normal_(self.proj.weight, std=0.01)
+        # Proper feature mixing with stride=2 to halve spatial dims
+        # Removed GroupNorm to drastically cut down compute time
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_ch, mid_ch, 3, stride=2, padding=1, bias=True),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
+        self.film = FiLM(mid_ch, pose_dim)
+        self.act = nn.LeakyReLU(0.2, inplace=True)
+        
+        self.proj = nn.Linear(mid_ch * 16, style_dim)  # 4x4 spatial pooled
+        # EXACT Zero-initialization is required for 4096-D projection of positive ReLUs
+        # Otherwise the accumulated variance explodes w_delta to massive OOD values,
+        # causing StyleGAN to render a blinding skin-colored smear.
+        nn.init.zeros_(self.proj.weight)
         if self.proj.bias is not None:
             nn.init.zeros_(self.proj.bias)
 
     def forward(self, feat: torch.Tensor, pose: torch.Tensor) -> torch.Tensor:
         """Returns style vector (B, style_dim)."""
-        x = self.down(feat)             # (B, mid_ch, H/2, W/2)
-        x = self.up(x)                  # (B, mid_ch, H, W)   approx
-        x = self.adain(x, pose)        # pose-injected
-        x = x.mean(dim=[2, 3])         # (B, mid_ch)  global avg pool
-        return self.proj(x)             # (B, 512)
+        x = self.conv(feat)            # (B, mid_ch, H/2, W/2)
+        x = self.film(x, pose)         # pose-injected
+        x = self.act(x)                # nonlinear activation
+        x = F.adaptive_avg_pool2d(x, (4, 4))  # (B, mid_ch, 4, 4) - preserve spatial map!
+        x = x.view(x.shape[0], -1)            # (B, mid_ch * 16) flatten
+        return self.proj(x)                   # (B, 512)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -201,10 +207,10 @@ class PoseConditionedEncoder(nn.Module):
             ])
             self.adapters.append(level_adapters)
 
-        # ── Learnable W+ offset initialized to zero ─────────────────────────
-        # (will be added to the frontal latent average loaded at inference)
-        self.w_offset = nn.Parameter(torch.zeros(1, n_styles, style_dim))
-
+        # Removed: self.w_offset = nn.Parameter(torch.zeros(1, n_styles, style_dim))
+        # The optimizer was exploiting w_offset as a shortcut to memorize an average
+        # face instead of learning to extract features via w_delta.
+        
         self._init_new_layers()
 
     @staticmethod
@@ -226,20 +232,22 @@ class PoseConditionedEncoder(nn.Module):
                     # initialized to zeros in its constructor to anchor at w_avg.
                     # Xavier-reinitializing it here would break that guarantee.
 
-        # Freeze early backbone layers to massively speed up training
-        # ImageNet stem, layer1, and layer2 already extract basic edges/textures perfectly
-        for block in [self.stem, self.layer1, self.layer2]:
+        # Freeze ENTIRE backbone. Training preceding conv layers while BN is frozen
+        # in eval() causes massive "BN Decay", pushing all inputs out of distribution 
+        # and permanently killing 100% of ReLUs in the network.
+        for block in [self.stem, self.layer1, self.layer2, self.layer3, self.layer4]:
             for param in block.parameters():
                 param.requires_grad = False
 
     def train(self, mode: bool = True):
-        # Override standard train mode to ensure frozen layers stay in eval mode!
-        # If BatchNorm2d layers drop to train mode, their running stats will 
-        # get completely destroyed by our tiny batch_size (4), ruining the backbone.
         super().train(mode)
         if mode:
-            for block in [self.stem, self.layer1, self.layer2]:
-                block.eval()
+            # Force all BatchNorm layers in the backbone into eval mode.
+            # Training BN with batch_size=4 completely destroys the running 
+            # statistics and kills feature extraction.
+            for m in self.modules():
+                if isinstance(m, nn.BatchNorm2d):
+                    m.eval()
         return self
 
     def forward(
@@ -284,7 +292,11 @@ class PoseConditionedEncoder(nn.Module):
                 style_vecs.append(adapter(level_feats, pose))   # (B, 512)
 
         # Stack → (B, 18, 512)
-        w_delta = torch.stack(style_vecs, dim=1) + self.w_offset  # (B, 18, 512)
+        w_delta = torch.stack(style_vecs, dim=1)  # w_offset shortcut removed!
+
+        # CLAMP w_delta aggressively! If w_delta exceeds standard W-space boundaries,
+        # StyleGAN2 demodulation inherently explodes, causing the black blob artifacts on eyebrows.
+        w_delta = torch.clamp(w_delta, min=-6.0, max=6.0)
 
         # ── Add frontal latent average if provided ───────────────────────────
         if w_avg is not None:

@@ -81,3 +81,10 @@ stylegan2_op/*.o
 # ─── Wandb / MLflow ───────────────────────────────────────────────────────────
 wandb/
 mlruns/
+
+# --- New Debug Files ---
+debug_*.txt
+debug_*.png
+
+# --- Temp Git Sync ---
+GitHub_Sync/
